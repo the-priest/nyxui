@@ -470,11 +470,12 @@ check_pantheon() {
 
 check_groq_key() {
   if [ -n "${GROQ_API_KEY:-}" ]; then
-    ok "GROQ_API_KEY is set"
+    ok "GROQ_API_KEY is set in your shell"
+  elif [ -f "$HOME/.nyx/config.json" ] && grep -q gsk_ "$HOME/.nyx/config.json" 2>/dev/null; then
+    ok "GROQ_API_KEY is saved at ~/.nyx/config.json"
   else
-    warn "GROQ_API_KEY not set — Nyx cannot think without it"
-    dim "get one free at https://console.groq.com"
-    dim "then add to your shell rc:  export GROQ_API_KEY=gsk_..."
+    dim "GROQ_API_KEY not set — the app will prompt for one on first launch"
+    dim "(get a free key at https://console.groq.com)"
   fi
 }
 

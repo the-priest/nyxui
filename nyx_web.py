@@ -69,6 +69,55 @@ except Exception as e:
     traceback.print_exc()
     sys.exit(1)
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Config — persist the Groq API key so we don't need it in every shell env.
+# Env var wins if set (handy for one-off testing).  Otherwise we read
+# ~/.nyx/config.json and inject into os.environ so nyx.think() picks it up.
+# File is chmod 600.
+# ─────────────────────────────────────────────────────────────────────────────
+
+CONFIG_PATH = nyx.NYX_HOME / "config.json"
+
+
+def load_config() -> Dict[str, Any]:
+    if not CONFIG_PATH.exists():
+        return {}
+    try:
+        return json.loads(CONFIG_PATH.read_text())
+    except Exception:
+        return {}
+
+
+def save_config(cfg: Dict[str, Any]) -> None:
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+    try:
+        os.chmod(CONFIG_PATH, 0o600)
+    except OSError:
+        pass
+
+
+def resolve_groq_key() -> str:
+    """Set os.environ['GROQ_API_KEY'] from saved config if env is empty.
+    Returns 'env', 'saved', or 'none' for the source."""
+    if os.environ.get("GROQ_API_KEY"):
+        return "env"
+    cfg = load_config()
+    saved = (cfg.get("groq_api_key") or "").strip()
+    if saved:
+        os.environ["GROQ_API_KEY"] = saved
+        return "saved"
+    return "none"
+
+
+_KEY_SOURCE = resolve_groq_key()
+
+
+def has_groq_key() -> bool:
+    return bool(os.environ.get("GROQ_API_KEY"))
+
+
 _bg_thread = threading.Thread(target=nyx.background_cycles, daemon=True)
 _bg_thread.start()
 
@@ -268,6 +317,7 @@ just type to talk to nyx.  slash-prefix for system commands:
 /reflect       force a reflection now
 /lethe all     wipe (she will refuse)
 
+/key           change/set the Groq API key
 /zeus <args>   call the zeus binary
 /ares          call the ares binary
 /hades <args>  call the hades binary
@@ -372,6 +422,50 @@ def favicon_ico():
 @app.route("/api/state")
 def api_state():
     return jsonify(current_state())
+
+
+@app.route("/api/config", methods=["GET"])
+def api_config_get():
+    return jsonify({
+        "has_key": has_groq_key(),
+        "source": _KEY_SOURCE if has_groq_key() else "none",
+    })
+
+
+@app.route("/api/config", methods=["POST"])
+def api_config_post():
+    global _KEY_SOURCE
+    data = request.get_json(silent=True) or {}
+    key = (data.get("groq_api_key") or "").strip()
+    if not key:
+        return jsonify({"ok": False, "error": "no key provided"}), 400
+    if not key.startswith("gsk_"):
+        return jsonify({
+            "ok": False,
+            "error": "doesn't look like a Groq key — they start with 'gsk_'",
+        }), 400
+    cfg = load_config()
+    cfg["groq_api_key"] = key
+    try:
+        save_config(cfg)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"could not save: {e}"}), 500
+    os.environ["GROQ_API_KEY"] = key
+    _KEY_SOURCE = "saved"
+    return jsonify({"ok": True, "source": "saved"})
+
+
+@app.route("/api/config/clear", methods=["POST"])
+def api_config_clear():
+    global _KEY_SOURCE
+    cfg = load_config()
+    cfg.pop("groq_api_key", None)
+    save_config(cfg)
+    # Don't unset env if it came from env originally — that's not our key
+    if _KEY_SOURCE == "saved":
+        os.environ.pop("GROQ_API_KEY", None)
+        _KEY_SOURCE = "none"
+    return jsonify({"ok": True})
 
 
 @app.route("/api/history")
@@ -851,9 +945,157 @@ INDEX_HTML = r"""<!doctype html>
     .empty { font-size: 19px; margin-top: 18vh; }
     .bubble { max-width: 88%; }
   }
+
+  /* ─── setup overlay (first-launch / no-key) ─────────────────────────── */
+  #setup {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 28px 18px;
+    background:
+      radial-gradient(700px 400px at 50% 30%, rgba(110, 168, 255, 0.10), transparent 65%),
+      rgba(4, 6, 14, 0.94);
+    backdrop-filter: blur(4px);
+  }
+  #setup.show { display: flex; }
+  .setup-card {
+    width: 100%;
+    max-width: 460px;
+    background: linear-gradient(180deg, rgba(20, 28, 56, 0.72), rgba(8, 12, 28, 0.86));
+    border: 1px solid rgba(110, 168, 255, 0.22);
+    border-radius: 20px;
+    padding: 28px 26px 22px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    animation: fade 0.4s ease-out both;
+  }
+  .setup-icon {
+    text-align: center;
+    font-size: 36px;
+    color: var(--night);
+    margin-bottom: 6px;
+  }
+  .setup-title {
+    text-align: center;
+    font-family: var(--display);
+    font-style: italic;
+    font-size: 28px;
+    color: var(--silver);
+    margin: 0 0 4px;
+  }
+  .setup-sub {
+    text-align: center;
+    color: var(--ink-dim);
+    font-size: 12.5px;
+    margin: 0 0 22px;
+  }
+  .setup-body {
+    color: var(--ink);
+    font-size: 13px;
+    line-height: 1.65;
+    margin-bottom: 16px;
+  }
+  .setup-body a {
+    color: var(--night);
+    text-decoration: none;
+    border-bottom: 1px dotted rgba(110, 168, 255, 0.4);
+  }
+  .setup-body a:hover { border-bottom-style: solid; }
+  .setup-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .setup-row input {
+    flex: 1;
+    background: rgba(0, 0, 0, 0.30);
+    border: 1px solid rgba(110, 168, 255, 0.24);
+    border-radius: 10px;
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 9px 12px;
+    outline: 0;
+    transition: border-color 0.15s;
+  }
+  .setup-row input:focus {
+    border-color: rgba(110, 168, 255, 0.55);
+  }
+  .setup-row input::placeholder {
+    color: var(--ink-faint);
+    font-style: italic;
+  }
+  .setup-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  .setup-btn {
+    flex: 1;
+    background: rgba(110, 168, 255, 0.12);
+    border: 1px solid rgba(110, 168, 255, 0.32);
+    color: var(--night);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.05s;
+  }
+  .setup-btn:hover { background: rgba(110, 168, 255, 0.22); }
+  .setup-btn:active { transform: scale(0.98); }
+  .setup-btn.ghost {
+    background: transparent;
+    color: var(--ink-dim);
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+  .setup-btn.ghost:hover { color: var(--silver); }
+  .setup-err {
+    color: var(--danger);
+    font-size: 12px;
+    min-height: 16px;
+    margin-top: 6px;
+    text-align: center;
+  }
+  .setup-tog {
+    background: transparent;
+    border: 1px solid rgba(110, 168, 255, 0.18);
+    color: var(--ink-faint);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 0 10px;
+    border-radius: 10px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
 </style>
 </head>
 <body>
+<div id="setup">
+  <div class="setup-card">
+    <div class="setup-icon">✦</div>
+    <h2 class="setup-title">she needs a key</h2>
+    <p class="setup-sub">first launch — Groq API key not found</p>
+    <p class="setup-body">
+      Paste your Groq API key below. It's saved to <code>~/.nyx/config.json</code>
+      (chmod 600) and stays on this machine.<br><br>
+      No key yet? Grab a free one at
+      <a href="https://console.groq.com" target="_blank" rel="noopener">console.groq.com</a>.
+    </p>
+    <div class="setup-row">
+      <input id="keyInput" type="password" placeholder="gsk_..." autocomplete="off" spellcheck="false">
+      <button class="setup-tog" id="keyTog" type="button">show</button>
+    </div>
+    <div class="setup-actions">
+      <button class="setup-btn" id="keySave">save &amp; continue</button>
+      <button class="setup-btn ghost" id="keySkip">skip for now</button>
+    </div>
+    <div class="setup-err" id="keyErr"></div>
+  </div>
+</div>
+
 <div id="app">
   <header>
     <div class="brand">
@@ -884,6 +1126,7 @@ INDEX_HTML = r"""<!doctype html>
       <button class="chip" data-cmd="/dreams">/dreams</button>
       <button class="chip" data-cmd="/sleep">/sleep</button>
       <button class="chip" data-cmd="/reflect">/reflect</button>
+      <button class="chip" data-cmd="/key">/key</button>
       <button class="chip" data-cmd="/help">/help</button>
     </div>
     <div class="composer">
@@ -985,6 +1228,13 @@ async function loadHistory() {
 
 async function sendMessage(text) {
   if (!text || busy) return;
+  // Client-side intercepts: /key reopens the setup overlay
+  if (text === '/key' || text.startsWith('/key ')) {
+    keyInput.value = '';
+    keyErr.textContent = '';
+    showSetup();
+    return;
+  }
   busy = true;
   send.disabled = true;
   addMessage({ role: 'user', text, kind: text.startsWith('/') ? 'system' : 'chat' });
@@ -1047,6 +1297,83 @@ chips.addEventListener('click', (e) => {
   sendMessage(b.dataset.cmd);
 });
 
+// ─── setup overlay logic ────────────────────────────────────────────────
+const setup    = document.getElementById('setup');
+const keyInput = document.getElementById('keyInput');
+const keyTog   = document.getElementById('keyTog');
+const keySave  = document.getElementById('keySave');
+const keySkip  = document.getElementById('keySkip');
+const keyErr   = document.getElementById('keyErr');
+
+function showSetup() { setup.classList.add('show'); setTimeout(() => keyInput.focus(), 100); }
+function hideSetup() { setup.classList.remove('show'); input.focus(); }
+
+keyTog.addEventListener('click', () => {
+  if (keyInput.type === 'password') { keyInput.type = 'text';  keyTog.textContent = 'hide'; }
+  else                              { keyInput.type = 'password'; keyTog.textContent = 'show'; }
+});
+
+async function submitKey() {
+  const key = keyInput.value.trim();
+  keyErr.textContent = '';
+  if (!key) { keyErr.textContent = 'paste a key first'; return; }
+  if (!key.startsWith('gsk_')) {
+    keyErr.textContent = "that doesn't look like a Groq key (should start with 'gsk_')";
+    return;
+  }
+  keySave.disabled = true;
+  try {
+    const r = await fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ groq_api_key: key }),
+    });
+    const d = await r.json();
+    if (!d.ok) { keyErr.textContent = d.error || 'save failed'; return; }
+    hideSetup();
+    await loadHistory();
+  } catch (e) {
+    keyErr.textContent = 'network error: ' + e;
+  } finally {
+    keySave.disabled = false;
+  }
+}
+
+keySave.addEventListener('click', submitKey);
+keyInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); submitKey(); }
+});
+keySkip.addEventListener('click', () => {
+  hideSetup();
+  loadHistory();
+  addMessage({
+    role: 'nyx',
+    kind: 'system',
+    tag: 'no key',
+    text: 'without a Groq key i cannot think.  slash commands still work.  set a key later: type /key',
+    ts: Date.now() / 1000,
+  });
+});
+
+// ─── boot ───────────────────────────────────────────────────────────────
+async function boot() {
+  let cfg = { has_key: false };
+  try {
+    const r = await fetch('/api/config');
+    cfg = await r.json();
+  } catch {}
+  if (!cfg.has_key) {
+    showSetup();
+    // also render an empty state pill row in the background
+    try {
+      const r = await fetch('/api/state');
+      renderState(await r.json());
+    } catch {}
+    return;
+  }
+  await loadHistory();
+}
+
 // refresh state pills every 30s (mood/fatigue decay naturally)
 setInterval(async () => {
   try {
@@ -1055,7 +1382,7 @@ setInterval(async () => {
   } catch {}
 }, 30000);
 
-loadHistory();
+boot();
 </script>
 </body>
 </html>
@@ -1079,8 +1406,12 @@ def main():
     url = f"http://{args.host}:{args.port}"
     sys.stderr.write(f"\n  ✦  nyx · web ui\n")
     sys.stderr.write(f"      {url}\n")
-    if not os.environ.get("GROQ_API_KEY"):
-        sys.stderr.write("      ⚠ GROQ_API_KEY not set — she won't be able to think\n")
+    if _KEY_SOURCE == "env":
+        sys.stderr.write(f"      ✓ GROQ_API_KEY loaded from environment\n")
+    elif _KEY_SOURCE == "saved":
+        sys.stderr.write(f"      ✓ GROQ_API_KEY loaded from {CONFIG_PATH}\n")
+    else:
+        sys.stderr.write(f"      ⚠ no GROQ_API_KEY — the app will ask for one on first load\n")
     sys.stderr.write("\n")
 
     if args.open:

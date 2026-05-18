@@ -42,13 +42,13 @@ Run this. It detects your distro, installs anything missing, and sets her up:
 curl -fsSL https://raw.githubusercontent.com/the-priest/nyxui/main/install.sh | bash
 ```
 
-Then export your Groq API key (free at <https://console.groq.com>) and add it to your shell rc:
+That's it. Launch from your app grid as **Nyx**, or run `nyx-app` in a terminal. On first launch the app will prompt for your Groq API key (free at <https://console.groq.com>) and save it to `~/.nyx/config.json` (chmod 600). If you'd rather set it via shell env, you can:
 
 ```
 export GROQ_API_KEY=gsk_...
 ```
 
-That's it. Launch from your app grid as **Nyx**, or run `nyx-app` in a terminal.
+— env always wins over the saved config. To change/remove the saved key later, type `/key` in the chat.
 
 ### what the installer does
 
@@ -114,6 +114,7 @@ Open the app and just talk to her. The input accepts free text (talks to Nyx) an
 | `/dreams` | consolidation log |
 | `/sleep` | force a consolidation cycle now |
 | `/reflect` | force a reflection now |
+| `/key` | change or set the Groq API key |
 | `/lethe all` | wipe (she will refuse — see [LOCKED] in `nyx.py`) |
 | `/zeus <args>` · `/ares` · `/hades <args>` | call pantheon binaries |
 | `/help` | this list |
