@@ -334,6 +334,32 @@ if [ -f "\$LOG" ] && [ "\$(stat -c%s "\$LOG" 2>/dev/null || echo 0)" -gt 1048576
   : > "\$LOG"
 fi
 
+# Pick a browser at runtime (re-detected each launch, not frozen at install).
+# Override with: NYX_BROWSER=chromium nyx-app
+pick_browser() {
+  if [ -n "\${NYX_BROWSER:-}" ] && command -v "\$NYX_BROWSER" >/dev/null 2>&1; then
+    BROWSER_BIN="\$NYX_BROWSER"
+    case "\$BROWSER_BIN" in
+      firefox*) BROWSER_FLAG="" ;;
+      *)        BROWSER_FLAG="--app=" ;;
+    esac
+    return
+  fi
+  for cand in chromium chromium-browser brave-browser google-chrome \
+              chrome microsoft-edge edge firefox firefox-esr; do
+    if command -v "\$cand" >/dev/null 2>&1; then
+      BROWSER_BIN="\$cand"
+      case "\$cand" in
+        firefox*) BROWSER_FLAG="" ;;
+        *)        BROWSER_FLAG="--app=" ;;
+      esac
+      return
+    fi
+  done
+  BROWSER_BIN=""
+  BROWSER_FLAG=""
+}
+
 is_running() {
   [ -f "\$PID_FILE" ] || return 1
   local pid
@@ -344,19 +370,22 @@ is_running() {
 server_pid() { cat "\$PID_FILE" 2>/dev/null; }
 
 open_browser() {
+  pick_browser
+  if [ -z "\$BROWSER_BIN" ]; then
+    xdg-open "\$URL" 2>/dev/null || echo "Open: \$URL"
+    return
+  fi
+  if [ -n "\$BROWSER_FLAG" ]; then
+    "\$BROWSER_BIN" "\${BROWSER_FLAG}\$URL" >/dev/null 2>&1 & disown 2>/dev/null || true
+  else
+    "\$BROWSER_BIN" "\$URL" >/dev/null 2>&1 & disown 2>/dev/null || true
+  fi
+  echo "opening in \$BROWSER_BIN"
+}
 EOF
 
-  # Splice in the right browser invocation
-  if [ -n "$app_browser" ] && [ -n "$app_flag" ]; then
-    printf '  %s\n' "$app_browser ${app_flag}\"\$URL\" >/dev/null 2>&1 & disown 2>/dev/null || true" >> "$BIN_DIR/nyx-app"
-  elif [ -n "$app_browser" ]; then
-    printf '  %s\n' "$app_browser \"\$URL\" >/dev/null 2>&1 & disown 2>/dev/null || true" >> "$BIN_DIR/nyx-app"
-  else
-    printf '  %s\n' "xdg-open \"\$URL\" 2>/dev/null || echo \"Open: \$URL\"" >> "$BIN_DIR/nyx-app"
-  fi
-
+  # No more browser splicing — pick_browser handles it at runtime
   cat >> "$BIN_DIR/nyx-app" <<EOF
-}
 
 wait_for_server() {
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do

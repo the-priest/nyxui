@@ -118,7 +118,7 @@ def has_groq_key() -> bool:
     return bool(os.environ.get("GROQ_API_KEY"))
 
 
-VERSION = "0.5"
+VERSION = "0.6"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -975,8 +975,10 @@ INDEX_HTML = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#050816">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>nyx</title>
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <link rel="apple-touch-icon" href="/icon.svg">
@@ -1007,7 +1009,18 @@ INDEX_HTML = r"""<!doctype html>
   }
 
   * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; }
+  html, body {
+    height: 100%;
+    margin: 0;
+    /* lock the engine's "helpful" auto-text-resizing */
+    -webkit-text-size-adjust: 100%;
+    -moz-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    /* prevent double-tap-to-zoom and pinch overshoot */
+    touch-action: manipulation;
+    /* iOS bounce-scroll containment */
+    overscroll-behavior: none;
+  }
 
   body {
     background:
@@ -1691,7 +1704,7 @@ INDEX_HTML = r"""<!doctype html>
       </button>
       <span class="glyph">✦</span>
       <span class="word">nyx</span>
-      <span class="v">v0.5</span>
+      <span class="v">v0.6</span>
     </div>
     <div class="pills" id="pills"></div>
   </header>
