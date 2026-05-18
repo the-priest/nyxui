@@ -115,6 +115,7 @@ Open the app and just talk to her. The input accepts free text (talks to Nyx) an
 | `/sleep` | force a consolidation cycle now |
 | `/reflect` | force a reflection now |
 | `/key` | change or set the Groq API key |
+| `/diag` | show version, key status, ping Groq — tells you exactly what's wrong |
 | `/lethe all` | wipe (she will refuse — see [LOCKED] in `nyx.py`) |
 | `/zeus <args>` · `/ares` · `/hades <args>` | call pantheon binaries |
 | `/help` | this list |
