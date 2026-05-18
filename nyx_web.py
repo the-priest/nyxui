@@ -118,7 +118,7 @@ def has_groq_key() -> bool:
     return bool(os.environ.get("GROQ_API_KEY"))
 
 
-VERSION = "0.4"
+VERSION = "0.5"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -222,7 +222,86 @@ _bg_thread = threading.Thread(target=nyx.background_cycles, daemon=True)
 _bg_thread.start()
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# PID file + idle auto-shutdown
+#
+# When the user closes the browser window, /api/state stops being polled.
+# After IDLE_TIMEOUT_SEC with no requests at all, the server kills itself
+# so it doesn't sit in RAM forever draining battery.
+#
+# Set NYX_IDLE_TIMEOUT=0 to disable (run forever until manually stopped).
+# ─────────────────────────────────────────────────────────────────────────────
+
+import atexit
+import signal as _signal
+
+PID_FILE = nyx.NYX_HOME / "nyx-app.pid"
+IDLE_TIMEOUT_SEC = int(os.environ.get("NYX_IDLE_TIMEOUT", "300"))
+
+_last_request_ts = time.time()
+
+
+def _write_pid():
+    try:
+        nyx.NYX_HOME.mkdir(parents=True, exist_ok=True)
+        PID_FILE.write_text(str(os.getpid()))
+    except Exception as e:
+        sys.stderr.write(f"[nyx_web] could not write PID file: {e}\n")
+
+
+def _cleanup_pid():
+    try:
+        if PID_FILE.exists():
+            content = PID_FILE.read_text().strip()
+            if content == str(os.getpid()):
+                PID_FILE.unlink()
+    except Exception:
+        pass
+
+
+def _signal_exit(signum, frame):
+    sys.stderr.write(f"[nyx_web] received signal {signum} — shutting down\n")
+    _cleanup_pid()
+    os._exit(0)
+
+
+_write_pid()
+atexit.register(_cleanup_pid)
+for _sig in (_signal.SIGTERM, _signal.SIGINT, _signal.SIGHUP):
+    try:
+        _signal.signal(_sig, _signal_exit)
+    except Exception:
+        pass
+
+
+def _idle_watchdog():
+    """Background thread: terminates the process if no API activity
+    for IDLE_TIMEOUT_SEC.  Reset every time a request comes in."""
+    if IDLE_TIMEOUT_SEC <= 0:
+        return
+    while True:
+        time.sleep(30)
+        idle = time.time() - _last_request_ts
+        if idle > IDLE_TIMEOUT_SEC:
+            sys.stderr.write(
+                f"[nyx_web] idle for {int(idle)}s "
+                f"(threshold {IDLE_TIMEOUT_SEC}s) — shutting down\n"
+            )
+            _cleanup_pid()
+            os._exit(0)
+
+
+threading.Thread(target=_idle_watchdog, daemon=True).start()
+
+
 app = Flask(__name__)
+
+
+@app.before_request
+def _track_activity():
+    """Reset the idle watchdog on every request."""
+    global _last_request_ts
+    _last_request_ts = time.time()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -515,7 +594,11 @@ def handle_command(cmd: str, rest: str, out: List[Dict[str, Any]]) -> bool:
 
 @app.route("/")
 def index():
-    return Response(INDEX_HTML, mimetype="text/html")
+    resp = Response(INDEX_HTML, mimetype="text/html")
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"]        = "no-cache"
+    resp.headers["Expires"]       = "0"
+    return resp
 
 
 @app.route("/icon.svg")
@@ -1608,7 +1691,7 @@ INDEX_HTML = r"""<!doctype html>
       </button>
       <span class="glyph">✦</span>
       <span class="word">nyx</span>
-      <span class="v">v0.4</span>
+      <span class="v">v0.5</span>
     </div>
     <div class="pills" id="pills"></div>
   </header>
